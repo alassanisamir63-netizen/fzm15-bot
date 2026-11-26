@@ -1,22 +1,28 @@
-import yfinance as yf
 import requests
 import time
 import pandas as pd
 import numpy as np
 from datetime import datetime, timezone, time as dt_time
 import sys
+import websocket
+import json
+import threading
+from collections import defaultdict
 
 print("=== FLIP ZONE BOT START ===", flush=True)
 sys.stdout.flush()
 
 # === CONFIG ===
-TOKEN = "8852964175:AAGz3mGv6STjtqURNZ-WJnEHxJ0XDncTlhk"
+TOKEN = "TOKEN = "8852964175:AAGz3mGv6STjtqURNZ-WJnEHxJ0XDncTlhk"
 CHAT_ID = "1003506265"
 SYMBOLS = ["EURUSD", "GBPUSD"]
 TIMEFRAMES = ["5m", "15m"]
+DERIV_APP_ID = "1089"
 # ==============
 
 active_zones = {}
+candles_data = defaultdict(lambda: defaultdict(list))
+ws = None
 
 def send_telegram(msg):
     try:
@@ -88,16 +94,11 @@ def check_signal(df, zone):
         print(f"ERR Signal: {e}", flush=True)
     return False, None
 
-def analyze_symbol_tf(symbol, tf):
+def analyze_symbol_tf(symbol, tf, df):
     key = f"{symbol}_{tf}"
     try:
-        period = "5d" if tf == "15m" else "2d"
-        df = yf.download(f"{symbol}=X", period=period, interval=tf, progress=False, auto_adjust=False)
         if df.empty or len(df) < 20:
             return
-        # FIX : gère MultiIndex de yfinance
-        df.columns = [str(c[0]).capitalize() if isinstance(c, tuple) else str(c).capitalize() for c in df.columns]
-        
         last_time = df.index[-2].to_pydatetime().replace(tzinfo=timezone.utc)
         if not in_session(last_time):
             return
@@ -115,29 +116,42 @@ def analyze_symbol_tf(symbol, tf):
                 tp, sl = entry - d, entry + 3 * d
                 be, limite = entry - d/2, entry - 0.2 * d
                 renfort = entry + 2 * d
-                spread = 0.00003
-                msg = f"🔴 <b>FLIP ZONE {symbol} {tf.upper()}</b>\nSHORT @ {entry:.5f}\nTP: {tp:.5f} | SL: {sl:.5f}\nBE: {be:.5f} | Renfort: {renfort:.5f}\nLimite: {limite:.5f}\nATR: {atr:.5f}"
+                msg = f"🔴 <b>FLIP ZONE {symbol} {tf.upper()}</b>\nSHORT @ {entry:.5f}\nTP: {tp:.5f} | SL: {sl:.5f}\nBE: {be:.5f} | Renfort: {renfort:.5f}\nLimite: {limite:.5f}"
                 send_telegram(msg)
                 print(f"SIGNAL {symbol} {tf}", flush=True)
                 del active_zones[key]
     except Exception as e:
         print(f"ERR {symbol} {tf}: {e}", flush=True)
 
-# === DÉMARRAGE ===
-try:
-    send_telegram("🤖 <b>Flip Zone Bot ACTIF</b>\nM5 + M15 EURUSD/GBPUSD")
-    print("Boucle lancée...", flush=True)
-    while True:
-        try:
-            now = datetime.now(timezone.utc)
-            print(f"\n--- {now.strftime('%H:%M:%S')} UTC ---", flush=True)
-            for symbol in SYMBOLS:
-                for tf in TIMEFRAMES:
-                    analyze_symbol_tf(symbol, tf)
-            time.sleep(60)
-        except Exception as e:
-            print(f"CRASH BOUCLE: {e}", flush=True)
-            time.sleep(30)
-except Exception as e:
-    print(f"CRASH FATAL: {e}", flush=True)
-    sys.exit(1)
+def build_candles(symbol, tf_minutes):
+    ticks = candles_data[symbol]['ticks']
+    if not ticks:
+        return pd.DataFrame()
+    
+    df_ticks = pd.DataFrame(ticks)
+    df_ticks['time'] = pd.to_datetime(df_ticks['epoch'], unit='s', utc=True)
+    df_ticks.set_index('time', inplace=True)
+    
+    ohlc = df_ticks['price'].resample(f'{tf_minutes}min').ohlc()
+    ohlc.columns = ['Open', 'High', 'Low', 'Close']
+    return ohlc.dropna()
+
+def on_message(ws, message):
+    data = json.loads(message)
+    if 'tick' in data:
+        tick = data['tick']
+        symbol = tick['symbol']
+        if symbol in ['frxEURUSD', 'frxGBPUSD']:
+            clean_sym = symbol.replace('frx', '')
+            candles_data[clean_sym]['ticks'].append({
+                'epoch': tick['epoch'],
+                'price': float(tick['quote'])
+            })
+            # Garde seulement les 5000 derniers ticks
+            if len(candles_data[clean_sym]['ticks']) > 5000:
+                candles_data[clean_sym]['ticks'] = candles_data[clean_sym]['ticks'][-5000:]
+
+def on_open(ws):
+    print("Deriv WS connecté", flush=True)
+    for sym in ['frxEURUSD', 'frxGBPUSD']:
+        ws.send(json.dumps({"ticks": sym, "subscribe":
