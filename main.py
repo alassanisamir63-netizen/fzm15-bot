@@ -13,7 +13,7 @@ print("=== FLIP ZONE BOT START ===", flush=True)
 sys.stdout.flush()
 
 # === CONFIG ===
-TOKEN = "TOKEN = "8852964175:AAGz3mGv6STjtqURNZ-WJnEHxJ0XDncTlhk"
+TOKEN = "8852964175:AAGz3mGv6STjtqURNZ-WJnEHxJ0XDncTlhk"
 CHAT_ID = "1003506265"
 SYMBOLS = ["EURUSD", "GBPUSD"]
 TIMEFRAMES = ["5m", "15m"]
