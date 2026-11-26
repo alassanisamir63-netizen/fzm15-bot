@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 import pandas as pd
 import numpy as np
 
-TOKEN = 8852964175:AAGz3mGv6STjtqURNZ- WJnEHxJ0XDncTlhk
+TOKEN = 8852964175:AAGz3mGv6STjtqURNZ-WJnEHxJ0XDncTlhk
 CHAT_ID = "1003506265"
 PAIRS = ["EURUSD=X", "GBPUSD=X"]
 TF_LIST = ["5m", "15m"]
