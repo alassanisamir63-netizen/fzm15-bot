@@ -21,6 +21,7 @@ DERIV_APP_ID = "1089"
 active_zones = {}
 candles_data = defaultdict(lambda: defaultdict(list))
 ws = None
+HTF_LEVELS = {}  # NOUVEAU : stocke niveaux H1
 
 def send_telegram(msg):
     try:
@@ -84,6 +85,26 @@ def check_signal(df, zone):
         print(f"ERR Signal: {e}", flush=True)
     return False, None
 
+def get_htf_levels(symbol):
+    """NOUVEAU : récupère niveaux H1"""
+    try:
+        ticks = candles_data[symbol]['ticks']
+        if len(ticks) < 500:
+            return []
+        df_ticks = pd.DataFrame(ticks)
+        df_ticks['time'] = pd.to_datetime(df_ticks['epoch'], unit='s', utc=True)
+        df_ticks.set_index('time', inplace=True)
+        h1 = df_ticks['price'].resample('1h').ohlc().dropna()
+        if len(h1) < 20:
+            return []
+        levels = []
+        for i in range(-20, 0):
+            levels.append(float(h1.iloc[i]['High']))
+            levels.append(float(h1.iloc[i]['Low']))
+        return levels
+    except:
+        return []
+
 def analyze_symbol_tf(symbol, tf, df):
     key = f"{symbol}_{tf}"
     try:
@@ -95,6 +116,17 @@ def analyze_symbol_tf(symbol, tf, df):
         new_zone = check_flip_zone(df)
         if new_zone:
             active_zones[key] = new_zone
+            # NOUVEAU : filtre H1 pour M5
+            if tf == "5m":
+                levels = get_htf_levels(symbol)
+                HTF_LEVELS[key] = levels
+                confluence = False
+                for lvl in levels:
+                    if abs(new_zone['low'] - lvl) < 0.0010 or abs(new_zone['high'] - lvl) < 0.0010:
+                        confluence = True
+                        break
+                if confluence:
+                    print(f"[{symbol} {tf}] 🔥 CONFLUENCE H1", flush=True)
             print(f"[{symbol} {tf}] Zone: {new_zone['low']:.5f}-{new_zone['high']:.5f}", flush=True)
         if key in active_zones:
             zone = active_zones[key]
@@ -106,9 +138,17 @@ def analyze_symbol_tf(symbol, tf, df):
                 tp, sl = entry - d, entry + 3 * d
                 be, limite = entry - d/2, entry - 0.2 * d
                 renfort = entry + 2 * d
-                msg = f"🔴 <b>FLIP ZONE {symbol} {tf.upper()}</b>\nSHORT @ {entry:.5f}\nTP: {tp:.5f} | SL: {sl:.5f}\nBE: {be:.5f} | Renfort: {renfort:.5f}\nLimite: {limite:.5f}"
+                # NOUVEAU : tag confluence
+                tag = ""
+                if tf == "5m":
+                    levels = HTF_LEVELS.get(key, [])
+                    for lvl in levels:
+                        if abs(entry - lvl) < 0.0010:
+                            tag = " 🔥 H1"
+                            break
+                msg = f"🔴 <b>FLIP ZONE {symbol} {tf.upper()}{tag}</b>\nSHORT @ {entry:.5f}\nTP: {tp:.5f} | SL: {sl:.5f}\nBE: {be:.5f} | Renfort: {renfort:.5f}\nLimite: {limite:.5f}"
                 send_telegram(msg)
-                print(f"SIGNAL {symbol} {tf}", flush=True)
+                print(f"SIGNAL {symbol} {tf}{tag}", flush=True)
                 del active_zones[key]
     except Exception as e:
         print(f"ERR {symbol} {tf}: {e}", flush=True)
@@ -146,7 +186,7 @@ def start_websocket():
     ws.run_forever()
 
 try:
-    send_telegram("🤖 <b>Flip Zone Bot ACTIF (Deriv)</b>\nM5 + M15 EURUSD/GBPUSD")
+    send_telegram("🤖 <b>Flip Zone Bot ACTIF (Deriv + H1)</b>\nM5 + M15 EURUSD/GBPUSD")
     print("Boucle lancée...", flush=True)
     ws_thread = threading.Thread(target=start_websocket, daemon=True)
     ws_thread.start()
