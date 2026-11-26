@@ -50,7 +50,7 @@ def calculate_atr(df, period=14):
 def check_flip_zone(df):
     try:
         if len(df) < 20:
-            return None, False
+            return None
         df = df.copy()
         df['ATR'] = calculate_atr(df)
         df['body'] = np.abs(df['Close'] - df['Open'])
@@ -67,10 +67,10 @@ def check_flip_zone(df):
                 'created_at': last.name,
                 'atr': float(last['ATR'])
             }
-            return zone, False
+            return zone
     except Exception as e:
         print(f"ERR Zone: {e}", flush=True)
-    return None, False
+    return None
 
 def check_signal(df, zone):
     try:
@@ -95,11 +95,13 @@ def analyze_symbol_tf(symbol, tf):
         df = yf.download(f"{symbol}=X", period=period, interval=tf, progress=False, auto_adjust=False)
         if df.empty or len(df) < 20:
             return
-        df.columns = [c.capitalize() for c in df.columns]
+        # FIX : gère MultiIndex de yfinance
+        df.columns = [str(c[0]).capitalize() if isinstance(c, tuple) else str(c).capitalize() for c in df.columns]
+        
         last_time = df.index[-2].to_pydatetime().replace(tzinfo=timezone.utc)
         if not in_session(last_time):
             return
-        new_zone, _ = check_flip_zone(df)
+        new_zone = check_flip_zone(df)
         if new_zone:
             active_zones[key] = new_zone
             print(f"[{symbol} {tf}] Zone: {new_zone['low']:.5f}-{new_zone['high']:.5f}", flush=True)
@@ -114,7 +116,7 @@ def analyze_symbol_tf(symbol, tf):
                 be, limite = entry - d/2, entry - 0.2 * d
                 renfort = entry + 2 * d
                 spread = 0.00003
-                msg = f"🔴 <b>FLIP ZONE {symbol} {tf.upper()}</b>\nSHORT @ {entry:.5f}\nTP: {tp:.5f} | SL: {sl:.5f}\nBE: {be:.5f} | Renfort: {renfort:.5f}"
+                msg = f"🔴 <b>FLIP ZONE {symbol} {tf.upper()}</b>\nSHORT @ {entry:.5f}\nTP: {tp:.5f} | SL: {sl:.5f}\nBE: {be:.5f} | Renfort: {renfort:.5f}\nLimite: {limite:.5f}\nATR: {atr:.5f}"
                 send_telegram(msg)
                 print(f"SIGNAL {symbol} {tf}", flush=True)
                 del active_zones[key]
