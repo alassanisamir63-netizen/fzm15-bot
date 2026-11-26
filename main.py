@@ -12,13 +12,11 @@ from collections import defaultdict
 print("=== FLIP ZONE BOT START ===", flush=True)
 sys.stdout.flush()
 
-# === CONFIG ===
 TOKEN = "8852964175:AAGz3mGv6STjtqURNZ-WJnEHxJ0XDncTlhk"
 CHAT_ID = "1003506265"
 SYMBOLS = ["EURUSD", "GBPUSD"]
 TIMEFRAMES = ["5m", "15m"]
 DERIV_APP_ID = "1089"
-# ==============
 
 active_zones = {}
 candles_data = defaultdict(lambda: defaultdict(list))
@@ -67,13 +65,7 @@ def check_flip_zone(df):
         pause_range_ok = last['range'] > 1.0 * last['ATR']
         impulse_ok = prev['body'] > 1.5 * prev['ATR']
         if pause_body_ok and pause_range_ok and impulse_ok:
-            zone = {
-                'high': float(last['High']),
-                'low': float(last['Low']),
-                'created_at': last.name,
-                'atr': float(last['ATR'])
-            }
-            return zone
+            return {'high': float(last['High']), 'low': float(last['Low']), 'created_at': last.name, 'atr': float(last['ATR'])}
     except Exception as e:
         print(f"ERR Zone: {e}", flush=True)
     return None
@@ -85,9 +77,7 @@ def check_signal(df, zone):
         last = df.iloc[-2]
         prev = df.iloc[-3]
         touches = last['High'] >= zone['low'] and last['Low'] <= zone['high']
-        prev_below = prev['Close'] <= zone['low']
-        curr_above = last['Close'] > zone['low']
-        cross_up = prev_below and curr_above
+        cross_up = prev['Close'] <= zone['low'] and last['Close'] > zone['low']
         if touches and cross_up:
             return True, last
     except Exception as e:
@@ -127,11 +117,9 @@ def build_candles(symbol, tf_minutes):
     ticks = candles_data[symbol]['ticks']
     if not ticks:
         return pd.DataFrame()
-    
     df_ticks = pd.DataFrame(ticks)
     df_ticks['time'] = pd.to_datetime(df_ticks['epoch'], unit='s', utc=True)
     df_ticks.set_index('time', inplace=True)
-    
     ohlc = df_ticks['price'].resample(f'{tf_minutes}min').ohlc()
     ohlc.columns = ['Open', 'High', 'Low', 'Close']
     return ohlc.dropna()
@@ -143,15 +131,40 @@ def on_message(ws, message):
         symbol = tick['symbol']
         if symbol in ['frxEURUSD', 'frxGBPUSD']:
             clean_sym = symbol.replace('frx', '')
-            candles_data[clean_sym]['ticks'].append({
-                'epoch': tick['epoch'],
-                'price': float(tick['quote'])
-            })
-            # Garde seulement les 5000 derniers ticks
+            candles_data[clean_sym]['ticks'].append({'epoch': tick['epoch'], 'price': float(tick['quote'])})
             if len(candles_data[clean_sym]['ticks']) > 5000:
                 candles_data[clean_sym]['ticks'] = candles_data[clean_sym]['ticks'][-5000:]
 
 def on_open(ws):
     print("Deriv WS connecté", flush=True)
     for sym in ['frxEURUSD', 'frxGBPUSD']:
-        ws.send(json.dumps({"ticks": sym, "subscribe":
+        ws.send(json.dumps({"ticks": sym, "subscribe": 1}))
+
+def start_websocket():
+    global ws
+    ws = websocket.WebSocketApp(f"wss://ws.derivws.com/websockets/v3?app_id={DERIV_APP_ID}", on_message=on_message, on_open=on_open)
+    ws.run_forever()
+
+try:
+    send_telegram("🤖 <b>Flip Zone Bot ACTIF (Deriv)</b>\nM5 + M15 EURUSD/GBPUSD")
+    print("Boucle lancée...", flush=True)
+    ws_thread = threading.Thread(target=start_websocket, daemon=True)
+    ws_thread.start()
+    time.sleep(5)
+    while True:
+        try:
+            now = datetime.now(timezone.utc)
+            print(f"\n--- {now.strftime('%H:%M:%S')} UTC ---", flush=True)
+            for symbol in SYMBOLS:
+                for tf in TIMEFRAMES:
+                    tf_min = 5 if tf == "5m" else 15
+                    df = build_candles(symbol, tf_min)
+                    if not df.empty:
+                        analyze_symbol_tf(symbol, tf, df)
+            time.sleep(60)
+        except Exception as e:
+            print(f"CRASH BOUCLE: {e}", flush=True)
+            time.sleep(30)
+except Exception as e:
+    print(f"CRASH FATAL: {e}", flush=True)
+    sys.exit(1)
