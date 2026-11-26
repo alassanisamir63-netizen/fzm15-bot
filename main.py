@@ -131,3 +131,4 @@ def calc_levels(entry, atr_val):
 
 def format_alert(pair, tf, entry, zone, atr_val, levels, timestamp_utc):
     """Format message Telegram"""
+#
